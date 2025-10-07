@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+.ipynb_checkpoints/
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data (don't commit large files)
+data/raw/*.pdf
+data/raw/*.png
+data/raw/*.jpg
+*.csv
+!data/examples/*.csv  # except example CSVs
+
+# Results
+results/*.csv
+results/*.png
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Personal notes (optional - uncomment if you want to keep notes private)
+# notes/DAILY_LOG.md
+# notes/TODO.md
