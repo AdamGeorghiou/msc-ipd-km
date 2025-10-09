@@ -18,12 +18,11 @@ preprocessed <- preprocess(
   dat = radio_curve,
   trisk = at_risk_radio$time,
   nrisk = at_risk_radio$n_risk,
-  maxy = 100  # Data is in percentages (0-100)
+  maxy = 100 # Data is in percentages (0-100)
 )
 
 cat("\n✅ Preprocessing complete\n")
 
-# Reconstruct IPD
 ipd_result <- getIPD(
   prep = preprocessed,
   armID = 0,
@@ -34,14 +33,20 @@ cat("✅ IPD reconstruction complete\n")
 
 # Save result
 output_ipd <- ipd_result$IPD
+
+# Standardize column name to 'arm' (R may use 'treat')
+if ("treat" %in% colnames(output_ipd)) {
+  colnames(output_ipd)[colnames(output_ipd) == "treat"] <- "arm"
+}
+
 write.csv(output_ipd, "results/oracle_radio.csv", row.names = FALSE)
 
 # Print summary
-cat("\n" , paste(rep("=", 50), collapse=""), "\n")
+cat("\n", paste(rep("=", 50), collapse = ""), "\n")
 cat("R Oracle Summary\n")
-cat(paste(rep("=", 50), collapse=""), "\n")
+cat(paste(rep("=", 50), collapse = ""), "\n")
 cat(sprintf("Output saved to: results/oracle_radio.csv\n"))
 cat(sprintf("Reconstructed: %d patient records\n", nrow(output_ipd)))
 cat(sprintf("Events: %d\n", sum(output_ipd$status == 1)))
 cat(sprintf("Censored: %d\n", sum(output_ipd$status == 0)))
-cat(paste(rep("=", 50), collapse=""), "\n")
+cat(paste(rep("=", 50), collapse = ""), "\n")
