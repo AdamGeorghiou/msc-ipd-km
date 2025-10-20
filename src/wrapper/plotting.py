@@ -6,7 +6,7 @@ Plotting functions for visualizing KM curve reconstruction accuracy.
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
-from typing import Optional, Dict
+from typing import List, Dict, Optional 
 
 
 def plot_km_overlay(
@@ -329,6 +329,244 @@ def plot_validation_dashboard(
              bbox=dict(boxstyle='round', facecolor='#F8F9FA', alpha=0.9, edgecolor='#CED4DA'))
     
     plt.suptitle('IPD Reconstruction Validation Dashboard', fontsize=16, fontweight='bold', y=0.98)
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"✅ Dashboard saved: {save_path}")
+    
+    return fig
+
+
+
+
+def plot_multi_arm_comparison(
+    original_curves: List[pd.DataFrame],
+    reconstructed_curves: List[pd.DataFrame],
+    arm_names: List[str],
+    validation_results: Optional[Dict] = None,
+    title: str = "Multi-Arm KM Curve Comparison",
+    save_path: Optional[str] = None,
+    figsize: tuple = (14, 8)
+):
+    """
+    Plot comparison of original vs reconstructed curves for multiple arms.
+    
+    Args:
+        original_curves: List of original digitized curves
+        reconstructed_curves: List of reconstructed curves
+        arm_names: List of arm names
+        validation_results: Optional validation results dict
+        title: Plot title
+        save_path: Path to save figure
+        figsize: Figure size
+    """
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+    
+    colors = ['#2E86AB', '#A23B72', '#F18F01', '#C73E1D', '#6A994E']
+    
+    # Left panel: Original curves
+    for i, (curve, name) in enumerate(zip(original_curves, arm_names)):
+        color = colors[i % len(colors)]
+        ax1.plot(
+            curve.iloc[:, 0], 
+            curve.iloc[:, 1],
+            'o-',
+            color=color,
+            linewidth=2,
+            markersize=3,
+            label=name,
+            alpha=0.7
+        )
+    
+    ax1.set_xlabel('Time (months)', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('Survival Probability (%)', fontsize=12, fontweight='bold')
+    ax1.set_title('Original Digitized Curves', fontsize=13, fontweight='bold')
+    ax1.grid(True, alpha=0.3, linestyle='--')
+    ax1.legend(loc='best', fontsize=11)
+    ax1.set_ylim(0, 105)
+    
+    # Right panel: Overlay (original + reconstructed)
+    for i, (orig, recon, name) in enumerate(zip(original_curves, reconstructed_curves, arm_names)):
+        color = colors[i % len(colors)]
+        
+        # Original (solid line with markers)
+        ax2.plot(
+            orig.iloc[:, 0], 
+            orig.iloc[:, 1],
+            'o-',
+            color=color,
+            linewidth=2,
+            markersize=3,
+            label=f'{name} (Original)',
+            alpha=0.6
+        )
+        
+        # Reconstructed (dashed line)
+        ax2.plot(
+            recon['time'],
+            recon['survival_prob'],
+            '--',
+            color=color,
+            linewidth=2.5,
+            label=f'{name} (Reconstructed)',
+            alpha=0.9
+        )
+    
+    ax2.set_xlabel('Time (months)', fontsize=12, fontweight='bold')
+    ax2.set_ylabel('Survival Probability (%)', fontsize=12, fontweight='bold')
+    ax2.set_title('Original vs Reconstructed', fontsize=13, fontweight='bold')
+    ax2.grid(True, alpha=0.3, linestyle='--')
+    ax2.legend(loc='best', fontsize=10, ncol=2)
+    ax2.set_ylim(0, 105)
+    
+    # Add validation metrics if provided
+    if validation_results:
+        overall = validation_results['overall']
+        metrics_text = (
+            f"Overall Metrics:\n"
+            f"Mean RMSE: {overall['mean_rmse']:.3f}%\n"
+            f"Mean MAE: {overall['mean_mae']:.3f}%\n"
+            f"Status: {'✓ PASS' if overall['all_arms_pass'] else '✗ FAIL'}"
+        )
+        
+        ax2.text(
+            0.98, 0.02,
+            metrics_text,
+            transform=ax2.transAxes,
+            fontsize=10,
+            verticalalignment='bottom',
+            horizontalalignment='right',
+            bbox=dict(boxstyle='round', facecolor='#F0F0F0', alpha=0.8),
+            family='monospace'
+        )
+    
+    plt.suptitle(title, fontsize=15, fontweight='bold', y=0.98)
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"✅ Figure saved: {save_path}")
+    
+    return fig, (ax1, ax2)
+
+
+def plot_multi_arm_dashboard(
+    original_curves: List[pd.DataFrame],
+    reconstructed_curves: List[pd.DataFrame],
+    reconstructed_ipd: pd.DataFrame,
+    arm_names: List[str],
+    validation_results: Dict,
+    save_path: Optional[str] = None
+):
+    """
+    Create comprehensive multi-arm validation dashboard.
+    
+    Args:
+        original_curves: List of original curves
+        reconstructed_curves: List of reconstructed curves
+        reconstructed_ipd: Combined IPD dataframe
+        arm_names: List of arm names
+        validation_results: Validation results dict
+        save_path: Path to save figure
+    """
+    
+    fig = plt.figure(figsize=(18, 12))
+    gs = fig.add_gridspec(3, 2, hspace=0.35, wspace=0.3)
+    
+    colors = ['#2E86AB', '#A23B72', '#F18F01', '#C73E1D']
+    
+    # 1. KM curve overlay (top row, span both columns)
+    ax1 = fig.add_subplot(gs[0, :])
+    for i, (orig, recon, name) in enumerate(zip(original_curves, reconstructed_curves, arm_names)):
+        color = colors[i % len(colors)]
+        ax1.plot(orig.iloc[:, 0], orig.iloc[:, 1], 'o-', color=color, 
+                linewidth=2, markersize=3, label=f'{name} (Orig)', alpha=0.6)
+        ax1.plot(recon['time'], recon['survival_prob'], '--', color=color,
+                linewidth=2.5, label=f'{name} (Recon)', alpha=0.9)
+    
+    ax1.set_xlabel('Time (months)', fontweight='bold')
+    ax1.set_ylabel('Survival Probability (%)', fontweight='bold')
+    ax1.set_title('Multi-Arm KM Curve Comparison', fontweight='bold', fontsize=13)
+    ax1.legend(loc='best', fontsize=10, ncol=4)
+    ax1.grid(True, alpha=0.3)
+    ax1.set_ylim(0, 105)
+    
+    # 2. Per-arm error plots (middle row)
+    for i, name in enumerate(arm_names[:2]):  # Show first 2 arms
+        ax = fig.add_subplot(gs[1, i])
+        
+        # Calculate errors for this arm
+        orig = original_curves[i]
+        recon = reconstructed_curves[i]
+        
+        from scipy.interpolate import interp1d
+        interp_func = interp1d(
+            recon['time'], recon['survival_prob'],
+            kind='previous', bounds_error=False, 
+            fill_value=(100, recon['survival_prob'].iloc[-1])
+        )
+        
+        orig_times = orig.iloc[:, 0].values
+        orig_surv = orig.iloc[:, 1].values
+        errors = np.abs(orig_surv - interp_func(orig_times))
+        
+        color = colors[i % len(colors)]
+        ax.plot(orig_times, errors, 'o-', color=color, linewidth=2, markersize=4)
+        ax.axhline(y=5.0, color='gray', linestyle='--', alpha=0.5)
+        ax.set_xlabel('Time (months)', fontweight='bold', fontsize=10)
+        ax.set_ylabel('Absolute Error (%)', fontweight='bold', fontsize=10)
+        ax.set_title(f'{name} - Reconstruction Error', fontweight='bold', fontsize=11)
+        ax.grid(True, alpha=0.3)
+    
+    # 3. Event distribution by arm (bottom left)
+    ax3 = fig.add_subplot(gs[2, 0])
+    for i, name in enumerate(arm_names):
+        arm_ipd = reconstructed_ipd[reconstructed_ipd['arm'] == i]
+        events = arm_ipd[arm_ipd['status'] == 1]['time']
+        color = colors[i % len(colors)]
+        ax3.hist(events, bins=20, alpha=0.6, color=color, label=f'{name} (n={len(events)})')
+    
+    ax3.set_xlabel('Time (months)', fontweight='bold')
+    ax3.set_ylabel('Frequency', fontweight='bold')
+    ax3.set_title('Event Distribution by Arm', fontweight='bold', fontsize=11)
+    ax3.legend(fontsize=9)
+    ax3.grid(True, alpha=0.3, axis='y')
+    
+    # 4. Validation metrics table (bottom right)
+    ax4 = fig.add_subplot(gs[2, 1])
+    ax4.axis('off')
+    
+    arm_results = validation_results['arm_results']
+    overall = validation_results['overall']
+    
+    metrics_text = "VALIDATION METRICS\n" + "="*45 + "\n\n"
+    
+    for name in arm_names:
+        results = arm_results[name]
+        metrics_text += f"{name}:\n"
+        metrics_text += f"  RMSE:    {results['rmse']:6.3f}% {'✓' if results['passes_rmse'] else '✗'}\n"
+        metrics_text += f"  MAE:     {results['mae']:6.3f}% {'✓' if results['passes_mae'] else '✗'}\n"
+        metrics_text += f"  KS p-val: {results['ks_pvalue']:6.4f} {'✓' if results['passes_ks_test'] else '✗'}\n\n"
+    
+    metrics_text += "-"*45 + "\n"
+    metrics_text += f"OVERALL:\n"
+    metrics_text += f"  Mean RMSE: {overall['mean_rmse']:.3f}%\n"
+    metrics_text += f"  Mean MAE:  {overall['mean_mae']:.3f}%\n"
+    metrics_text += f"  Status: {'ALL PASS ✓' if overall['all_arms_pass'] else 'FAIL ✗'}\n"
+    
+    # Patient counts
+    metrics_text += "\n" + "="*45 + "\n"
+    for i, name in enumerate(arm_names):
+        arm_ipd = reconstructed_ipd[reconstructed_ipd['arm'] == i]
+        metrics_text += f"{name}: {len(arm_ipd)} patients\n"
+    
+    ax4.text(0.05, 0.95, metrics_text, transform=ax4.transAxes,
+            fontsize=10, verticalalignment='top', family='monospace',
+            bbox=dict(boxstyle='round', facecolor='#F8F9FA', alpha=0.9))
+    
+    plt.suptitle('Multi-Arm IPD Reconstruction Dashboard', 
+                fontsize=16, fontweight='bold', y=0.99)
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')

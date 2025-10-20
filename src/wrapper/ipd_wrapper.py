@@ -7,6 +7,7 @@ import numpy as np
 import warnings
 warnings.filterwarnings('ignore')
 
+from typing import List, Dict, Optional
 import rpy2.robjects as ro
 from rpy2.robjects import pandas2ri
 from rpy2.robjects.packages import importr
@@ -348,3 +349,216 @@ def print_validation_summary(validation_results: dict):
     else:
         print("⚠️  Some validation checks failed - review metrics above")
     print("=" * 70 + "\n")
+
+def preprocess_multi_arm(
+    curve_data_list: List[pd.DataFrame],
+    at_risk_times_list: List[list],
+    at_risk_counts_list: List[list],
+    arm_names: Optional[List[str]] = None,
+    survival_scale: int = 100
+) -> Dict:
+    """
+    Preprocess multiple treatment arms for IPD reconstruction.
+    
+    Args:
+        curve_data_list: List of DataFrames, each with [time, survival_prob]
+        at_risk_times_list: List of time point lists (one per arm)
+        at_risk_counts_list: List of n_risk count lists (one per arm)
+        arm_names: Optional list of arm names (e.g., ["Control", "Treatment"])
+        survival_scale: 100 if survival in %, 1 if in decimal (0-1)
+        
+    Returns:
+        dict: Contains list of preprocessed R objects and metadata
+    """
+    
+    n_arms = len(curve_data_list)
+    
+    # Validation
+    if len(at_risk_times_list) != n_arms:
+        raise ValueError(f"Number of at_risk_times_list ({len(at_risk_times_list)}) must match number of arms ({n_arms})")
+    
+    if len(at_risk_counts_list) != n_arms:
+        raise ValueError(f"Number of at_risk_counts_list ({len(at_risk_counts_list)}) must match number of arms ({n_arms})")
+    
+    if arm_names is None:
+        arm_names = [f"Arm_{i}" for i in range(n_arms)]
+    elif len(arm_names) != n_arms:
+        raise ValueError(f"Number of arm_names ({len(arm_names)}) must match number of arms ({n_arms})")
+    
+    # Preprocess each arm
+    preprocessed_arms = []
+    for i in range(n_arms):
+        prep = preprocess(
+            curve_data=curve_data_list[i],
+            at_risk_times=at_risk_times_list[i],
+            at_risk_counts=at_risk_counts_list[i],
+            survival_scale=survival_scale
+        )
+        preprocessed_arms.append(prep)
+    
+    result = {
+        'preprocessed_arms': preprocessed_arms,
+        'n_arms': n_arms,
+        'arm_names': arm_names,
+        'survival_scale': survival_scale
+    }
+    
+    return result
+
+
+def extract_ipd_multi_arm(
+    preprocessed_multi: Dict,
+    total_events_list: Optional[List[int]] = None
+) -> pd.DataFrame:
+    """
+    Extract individual patient data from multiple treatment arms.
+    
+    Args:
+        preprocessed_multi: Output from preprocess_multi_arm()
+        total_events_list: Optional list of total events per arm
+        
+    Returns:
+        DataFrame with columns [time, status, arm] where arm indicates treatment group
+    """
+    
+    if 'preprocessed_arms' not in preprocessed_multi:
+        raise ValueError("preprocessed_multi must be output from preprocess_multi_arm()")
+    
+    n_arms = preprocessed_multi['n_arms']
+    arm_names = preprocessed_multi['arm_names']
+    
+    # Validate total_events_list if provided
+    if total_events_list is not None and len(total_events_list) != n_arms:
+        raise ValueError(f"total_events_list length ({len(total_events_list)}) must match n_arms ({n_arms})")
+    
+    # Extract IPD for each arm
+    all_ipd = []
+    for i in range(n_arms):
+        prep = preprocessed_multi['preprocessed_arms'][i]
+        tot_events = total_events_list[i] if total_events_list else None
+        
+        # Extract IPD for this arm
+        ipd = extract_ipd_single(
+            preprocessed_data=prep,
+            arm_id=i,
+            total_events=tot_events
+        )
+        
+        all_ipd.append(ipd)
+    
+    # Combine all arms into single DataFrame
+    combined_ipd = pd.concat(all_ipd, ignore_index=True)
+    
+    # Ensure correct data types
+    combined_ipd['time'] = combined_ipd['time'].astype(float)
+    combined_ipd['status'] = combined_ipd['status'].astype(int)
+    combined_ipd['arm'] = combined_ipd['arm'].astype(int)
+    
+    return combined_ipd
+
+
+def validate_multi_arm_reconstruction(
+    original_curves: List[pd.DataFrame],
+    reconstructed_ipd: pd.DataFrame,
+    arm_names: Optional[List[str]] = None
+) -> Dict:
+    """
+    Calculate validation metrics for multi-arm IPD reconstruction.
+    
+    Args:
+        original_curves: List of original digitized curves (one per arm)
+        reconstructed_ipd: Combined IPD from extract_ipd_multi_arm()
+        arm_names: Optional list of arm names
+        
+    Returns:
+        dict with per-arm metrics and overall summary
+    """
+    
+    n_arms = len(original_curves)
+    
+    if arm_names is None:
+        arm_names = [f"Arm_{i}" for i in range(n_arms)]
+    
+    # Validate each arm separately
+    arm_results = {}
+    
+    for i in range(n_arms):
+        # Filter IPD for this arm
+        arm_ipd = reconstructed_ipd[reconstructed_ipd['arm'] == i].copy()
+        
+        # Validate this arm
+        validation = validate_reconstruction(
+            original_curve=original_curves[i],
+            reconstructed_ipd=arm_ipd
+        )
+        
+        arm_results[arm_names[i]] = validation
+    
+    # Calculate overall statistics
+    all_rmse = [arm_results[name]['rmse'] for name in arm_names]
+    all_mae = [arm_results[name]['mae'] for name in arm_names]
+    all_max_error = [arm_results[name]['max_error'] for name in arm_names]
+    all_ks_pvalue = [arm_results[name]['ks_pvalue'] for name in arm_names]
+    
+    overall = {
+        'mean_rmse': np.mean(all_rmse),
+        'mean_mae': np.mean(all_mae),
+        'mean_max_error': np.mean(all_max_error),
+        'mean_ks_pvalue': np.mean(all_ks_pvalue),
+        'all_arms_pass': all([
+            all(arm_results[name][f'passes_{metric}'] 
+                for metric in ['rmse', 'mae', 'max_error', 'ks_test'])
+            for name in arm_names
+        ])
+    }
+    
+    result = {
+        'arm_results': arm_results,
+        'overall': overall,
+        'n_arms': n_arms,
+        'arm_names': arm_names
+    }
+    
+    return result
+
+
+def print_multi_arm_validation_summary(validation_results: Dict):
+    """
+    Print a formatted summary of multi-arm validation results.
+    
+    Args:
+        validation_results: Output from validate_multi_arm_reconstruction()
+    """
+    
+    print("\n" + "=" * 80)
+    print("MULTI-ARM VALIDATION SUMMARY")
+    print("=" * 80)
+    
+    arm_names = validation_results['arm_names']
+    arm_results = validation_results['arm_results']
+    overall = validation_results['overall']
+    
+    # Per-arm results
+    for name in arm_names:
+        results = arm_results[name]
+        print(f"\n--- {name} ---")
+        print(f"RMSE:       {results['rmse']:8.4f} % {'✅' if results['passes_rmse'] else '❌'}")
+        print(f"MAE:        {results['mae']:8.4f} % {'✅' if results['passes_mae'] else '❌'}")
+        print(f"Max Error:  {results['max_error']:8.4f} % {'✅' if results['passes_max_error'] else '❌'}")
+        print(f"KS p-value: {results['ks_pvalue']:8.6f} {'✅' if results['passes_ks_test'] else '❌'}")
+    
+    # Overall summary
+    print("\n" + "-" * 80)
+    print("OVERALL SUMMARY")
+    print("-" * 80)
+    print(f"Mean RMSE:       {overall['mean_rmse']:.4f} %")
+    print(f"Mean MAE:        {overall['mean_mae']:.4f} %")
+    print(f"Mean Max Error:  {overall['mean_max_error']:.4f} %")
+    print(f"Mean KS p-value: {overall['mean_ks_pvalue']:.6f}")
+    
+    print("\n" + "=" * 80)
+    if overall['all_arms_pass']:
+        print("🎉 ALL ARMS PASSED ALL VALIDATION CHECKS!")
+    else:
+        print("⚠️  Some arms failed validation checks")
+    print("=" * 80 + "\n")
